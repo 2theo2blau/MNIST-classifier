@@ -33,19 +33,21 @@ y_train = keras.utils.to_categorical(y_train, num_classes)
 y_test = keras.utils.to_categorical(y_test, num_classes)
 
 # create model
+def resnet_block(x, num_filters):
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    x = Conv2D(num_filters, (3, 3))(x)
+    x = BatchNormalization()(x)
+    x = Activation('relu')(x)
+    x = Conv2D(num_filters, (3, 3))(x)
+    return add([x, x])  # skip connection
+
 model = Sequential()
-model.add(Conv2D(32, kernel_size=(5, 5), activation='relu', input_shape=input_shape))
+model.add(Conv2D(64, (7, 7), activation='relu', input_shape=input_shape))
 model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(BatchNormalization())
-model.add(Conv2D(64, (3, 3), activation='relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(BatchNormalization())
-model.add(Conv2D(128, (3, 3), activation='relu'))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-model.add(Dropout(0.25))
-model.add(Flatten())
-model.add(Dense(256, activation='relu'))
-model.add(Dropout(0.5))
+for num_filters in [64, 128, 256]:
+    model = resnet_block(model, num_filters)
+model.add(GlobalAveragePooling2D())
 model.add(Dense(num_classes, activation='softmax'))
 
 # compile the model
