@@ -1,10 +1,9 @@
-# import necessary libraries
 import keras
 from keras.datasets import mnist
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Flatten
-from keras.layers import Conv2D, MaxPooling2D
-from keras import backend as K
+from keras.models import Model, Sequential
+from keras.layers import Dense, Dropout, Flatten, Conv2D, MaxPooling2D, BatchNormalization, GlobalAveragePooling2D, Add
+from keras.utils import to_categorical
+from keras.optimizers import Adam
 
 # input image dimensions
 img_rows, img_cols = 28, 28
@@ -13,48 +12,78 @@ num_classes = 10
 # the data, split between train and test sets
 (x_train, y_train), (x_test, y_test) = mnist.load_data()
 
-if K.image_data_format() == 'channels_first':
-    x_train = x_train.reshape(x_train.shape[0], 1, img_rows, img_cols)
-    x_test = x_test.reshape(x_test.shape[0], 1, img_rows, img_cols)
-    input_shape = (1, img_rows, img_cols)
-else:
-    x_train = x_train.reshape(x_train.shape[0], img_rows, img_cols, 1)
-    x_test = x_test.reshape(x_test.shape[0], img_rows, img_cols, 1)
-    input_shape = (img_rows, img_cols, 1)
+# Reshape the image data into a 4D array with dimensions (batch, height, width, channels)
+x_train = x_train.reshape(x_train.shape[0], img_rows, img_cols, 1).astype('float32') / 255
+x_test = x_test.reshape(x_test.shape[0], img_rows, img_cols, 1).astype('float32') / 255
 
-# convert our data type to float32 and normalize our dataset values to the range [0, 1].
-x_train = x_train.astype('float32')
-x_test = x_test.astype('float32')
-x_train /= 255
-x_test /= 255
+# Convert class vectors to binary class matrices (one-hot encoding)
+y_train = to_categorical(y_train, num_classes)
+y_test = to_categorical(y_test, num_classes)
 
-# convert class vectors to binary class matrices
-y_train = keras.utils.to_categorical(y_train, num_classes)
-y_test = keras.utils.to_categorical(y_test, num_classes)
-
-# create model
 def resnet_block(x, num_filters):
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(num_filters, (3, 3))(x)
-    x = BatchNormalization()(x)
-    x = Activation('relu')(x)
-    x = Conv2D(num_filters, (3, 3))(x)
-    return add([x, x])  # skip connection
+    f1 = Conv2D(num_filters, (3, 3), padding='same')(x)
+    f1 = BatchNormalization()(f1)
+    f1 = Activation('relu')(f1)
+    f1 = Conv2D(num_filters, (3, 3), padding='same')(f1)
+    return Add()([x, f1])  # skip connection
 
-model = Sequential()
-model.add(Conv2D(64, (7, 7), activation='relu', input_shape=input_shape))
-model.add(MaxPooling2D(pool_size=(2, 2)))
-for num_filters in [64, 128, 256]:
-    model = resnet_block(model, num_filters)
-model.add(GlobalAveragePooling2D())
-model.add(Dense(num_classes, activation='softmax'))
+def wide_block(x, num_filters):
+    f1 = Conv2D(num_filters, (1, 1), padding='same')(x)
+    f1 = BatchNormalization()(f1)
+    f1 = Activation('relu')(f1)
+    
+    f2 = Conv2D(num_filters, (3, 3), padding='same')(f1)
+    f2 = BatchNormalization()(f2)
+    f2 = Activation('relu')(f2)
+    
+    f3 = Conv2D(num_filters * 4, (1, 1), padding='same')(f2)
+    return Add()([x, f3])  # skip connection
+
+# def create_deeper_cnn(input_shape):
+#     model = Sequential()
+#     model.add(Conv2D(32, kernel_size=(5, 5), activation='relu', input_shape=input_shape))
+#     model.add(MaxPooling2D(pool_size=(2, 2)))
+#     model.add(BatchNormalization())
+#     model.add(Conv2D(64, (3, 3), activation='relu'))
+#     model.add(MaxPooling2D(pool_size=(2, 2)))
+#     model.add(BatchNormalization())
+#     model.add(Conv2D(128, (3, 3), activation='relu'))
+#     model.add(MaxPooling2D(pool_size=(2, 2)))
+#     model.add(Dropout(0.25))
+#     model.add(Flatten())
+#     model.add(Dense(256, activation='relu'))
+#     model.add(Dropout(0.5))
+#     model.add(Dense(num_classes, activation='softmax'))
+#     return model
+
+def create_wide_resnet(input_shape):
+    input_tensor = keras.Input(shape=input_shape)
+    x = input_tensor
+    
+    # Initial convolution block
+    x = BatchNormalization()(x)
+    f1 = Conv2D(16, (3, 3), padding='same')(x)
+    x = MaxPooling2D(pool_size=(2, 2))(f1)
+    
+    # Depth layers
+    for i in range(4):  # You can adjust the number of blocks here
+        x = wide_block(x, 16 * (i + 1))
+        
+    # Global average pooling and classification layer
+    x = GlobalAveragePooling2D()(x)
+    x = Dense(num_classes, activation='softmax')(x)
+    
+    return Model(inputs=input_tensor, outputs=x)
+
+# Choose one of the architectures
+model = create_deeper_cnn((img_rows, img_cols, 1))
+# model = create_wide_resnet((img_rows, img_cols, 1))
 
 # compile the model
-model.compile(loss=keras.losses.categorical_crossentropy, optimizer=keras.optimizers.Adadelta(), metrics=['accuracy'])
+model.compile(loss='categorical_crossentropy', optimizer=Adam(), metrics=['accuracy'])
 
 # train the model
-model.fit(x_train, y_train, batch_size=128, epochs=10, verbose=1, validation_data=(x_test, y_test))
+model.fit(x_train, y_train, batch_size=64, epochs=20, verbose=1, validation_data=(x_test, y_test))
 
 # evaluate the model
 score = model.evaluate(x_test, y_test, verbose=0)
